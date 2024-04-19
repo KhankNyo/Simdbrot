@@ -26,13 +26,14 @@ INLINE void RenderMandelbrotSet64_Unopt(
 
      u32 *Buffer = ColorBuffer->Ptr;
      double MaxValueSquared = MaxValue * MaxValue;
-     double Zix = Map.Left;
+     double Left = -Map.Left;
+     double Zix = Left;
      double Ziy = Map.Top;
      for (int y = 0; 
               y < ColorBuffer->Height; 
               y++, 
               Ziy -= Map.Delta,
-              Zix = Map.Left) 
+              Zix = Left) 
      {
          for (int x = 0; 
                   x < ColorBuffer->Width; 

@@ -34,9 +34,15 @@ typedef struct win32_main_thread_state
     HWND WindowManager,
          MainWindow;
     coordmap64 Map64;
-    double MouseTopPercentage;
-    double MouseLeftPercentage;
+
+    Bool8 MouseIsDragging;
+    int MouseX, MouseY;
 } win32_main_thread_state;
+
+typedef struct win32_window_dimension 
+{
+    int x, y, w, h;
+} win32_window_dimension;
 
 typedef struct win32_paint_context 
 {
@@ -64,15 +70,26 @@ static double Win32_GetTimeMillisec(void)
     return Win32_PerfCounterResolutionMillisec * (double)Li.QuadPart;
 }
 
+static win32_window_dimension Win32_GetWindowDimension(HWND Window)
+{
+    RECT Rect;
+    GetClientRect(Window, &Rect);
+    return (win32_window_dimension) {
+        .x = Rect.left,
+        .y = Rect.top,
+        .w = Rect.right - Rect.left,
+        .h = Rect.bottom - Rect.top,
+    };
+}
+
 static win32_paint_context Win32_BeginPaint(HWND Window)
 {
     HDC FrontDC = GetDC(Window);
     HDC BackDC = CreateCompatibleDC(FrontDC);
 
-    RECT ClientRect;
-    GetClientRect(Window, &ClientRect);
-    int Width = ClientRect.right - ClientRect.left,
-        Height = ClientRect.bottom - ClientRect.top;
+    win32_window_dimension Dimension = Win32_GetWindowDimension(Window);
+    int Width = Dimension.w,
+        Height = Dimension.h;
 
     BITMAPINFO BitmapInfo = {
         .bmiHeader = {
@@ -190,23 +207,50 @@ static Bool8 Win32_PollInputs(win32_main_thread_state *State)
 
         case WM_MOUSEMOVE:
         {
-            double x = (i16)LOWORD(Message.lParam);
-            double y = (i16)LOWORD(Message.lParam);
-            RECT Rect;
-            GetClientRect(State->MainWindow, &Rect);
-            State->MouseLeftPercentage = x / (Rect.right - Rect.left);
-            State->MouseTopPercentage = y / (Rect.bottom - Rect.top);
+            int x = (i16)LOWORD(Message.lParam);
+            int y = (i16)HIWORD(Message.lParam);
+            if (State->MouseIsDragging)
+            {
+                win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
+                double Dx = x - State->MouseX;
+                double Dy = y - State->MouseY;
+                double WorldDx = State->Map64.Width * Dx / Dimension.w;
+                double WorldDy = State->Map64.Height * Dy / Dimension.h;
+                State->Map64.Left += WorldDx;
+                State->Map64.Top += WorldDy;
+            }
+
+            State->MouseX = x;
+            State->MouseY = y;
+        } break;
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDOWN:
+        {
+            State->MouseIsDragging = Message.message == WM_LBUTTONDOWN;
         } break;
         case WM_MOUSEWHEEL:
         {
-            double Res = GET_WHEEL_DELTA_WPARAM(Message.wParam) < 0 ? -.1: .1;
-            double MouseDeltaX = State->MouseLeftPercentage + State->Map64.Left / State->Map64.Width;
-            double MouseDeltaY = (1 - State->MouseTopPercentage) - State->Map64.Top / State->Map64.Height;
-            double Delta = State->Map64.Width * Res;
-            State->Map64.Width -= Delta;
-            State->Map64.Left += Delta * MouseDeltaX;
-            State->Map64.Top -= Delta * MouseDeltaY;
-            State->Map64.Height -= Delta;
+            double Scale = GET_WHEEL_DELTA_WPARAM(Message.wParam) < 0 
+                ? .9
+                : 1.1;
+
+            win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
+            double NormalizedMouseX = (double)State->MouseX / (double)Dimension.w;
+            double NormalizedMouseY = (double)State->MouseY / (double)Dimension.h;
+            double WorldMouseX = NormalizedMouseX * State->Map64.Width - State->Map64.Left;
+            double WorldMouseY = State->Map64.Top - NormalizedMouseY * State->Map64.Height;
+            double ScaledMouseX = WorldMouseX * Scale;
+            double ScaledMouseY = WorldMouseY * Scale;
+
+            double NewLeft = NormalizedMouseX*State->Left
+
+
+            State->Map64.Left = NewLeft;
+            State->Map64.Width = NewRight - NewLeft;
+#if 0
+            State->Map64.Height = NewTop - NewBottom;
+            State->Map64.Top = NewTop;
+#endif
         } break;
 
         case WM_COMMAND:
@@ -275,12 +319,21 @@ static DWORD Win32_Main(LPVOID UserData)
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
         .Map64 = {
-            .Left = -2, 
+            .Left = 2, 
             .Top = 1, 
             .Height = 2,
             .Width = 3,
         },
     };
+
+    {
+        POINT Point;
+        GetCursorPos(&Point);
+        RECT Rect;
+        GetClientRect(MainWindow, &Rect);
+        State.MouseX = Point.x - Rect.left;
+        State.MouseY = Point.y - Rect.top;
+    }
     color_buffer Buffer;
     GetDefaultPalette(Buffer.Palette);
     double LastTime = Win32_GetTimeMillisec();
@@ -309,15 +362,23 @@ static DWORD Win32_Main(LPVOID UserData)
                     RenderMandelbrotSet64_Unopt(&Buffer, State.Map64, IterationCount, MaxValue);
 
 
-                char TmpTxt[64];
-                int Len = snprintf(TmpTxt, sizeof TmpTxt, "FPS: %3.2f\n", 1000.0 / ElapsedTime);
                 TEXTMETRICA TextStat;
                 GetTextMetricsA(Context.Back, &TextStat);
+
+                char TmpTxt[64];
+                int Len = snprintf(TmpTxt, sizeof TmpTxt, 
+                    "FPS: %3.2f\n"
+                    "x: %3.2f .. %3.2f\n"
+                    "y: %3.2f .. %3.2f", 
+                    1000.0 / ElapsedTime,
+                    -State.Map64.Left, -State.Map64.Left + State.Map64.Width,
+                    State.Map64.Top - State.Map64.Height, State.Map64.Top
+                );
                 RECT TopRight = {
-                    .left = Context.Width - Len * TextStat.tmMaxCharWidth,
+                    .left = Context.Width - 30 * TextStat.tmMaxCharWidth,
                     .right = Context.Width,
                     .top = 0,
-                    .bottom = TextStat.tmHeight,
+                    .bottom = TextStat.tmHeight * 3,
                 };
                 SetTextColor(Context.Back, 0x0000FF00);
                 SetBkColor(Context.Back, 0x00000000);

@@ -19,10 +19,10 @@ INLINE void RenderMandelbrotSet64_AVX256(
     const __m256i ColorPaletteSizeMask4 = _mm256_set1_epi64x(STATIC_ARRAY_SIZE(ColorBuffer->Palette) - 1);
     const __m256d MaxValueSquared4 = _mm256_set1_pd(MaxValue*MaxValue);
     const __m256d ZixResetValue4 = _mm256_set_pd(
-        Map.Left, 
-        Map.Left + Map.Delta, 
-        Map.Left + 2*Map.Delta, 
-        Map.Left + 3*Map.Delta
+        -Map.Left, 
+        -Map.Left + Map.Delta, 
+        -Map.Left + 2*Map.Delta, 
+        -Map.Left + 3*Map.Delta
     );
     __m256d Zix4 = ZixResetValue4;
     __m256d Ziy4 = _mm256_set1_pd(Map.Top);
