@@ -338,6 +338,15 @@ static double Win32_GetKeyDownTime(const win32_main_thread_state *State, char Ke
     return Win32_GetTimeMillisec() - State->KeyDownInit[k];
 }
 
+static Bool8 Win32_IsKeyDown(win32_main_thread_state *State, char Key, double Delay)
+{
+    unsigned char k = Key;
+    Bool8 IsDown = State->KeyIsDown[k] && State->KeyDownInit[k] > Delay;
+    if (!IsDown)
+        State->KeyDownInit[k] = Win32_GetTimeMillisec();
+    return IsDown;
+}
+
 static const char *GetSimdMode(int Mode)
 {
     switch (Mode)
@@ -408,30 +417,21 @@ static DWORD Win32_Main(LPVOID UserData)
     double ElapsedTime = 0;
     double MillisecPerFrame = 1000.0 / 60.0;
     double MaxValue = 2.0;
+    double KeyDelay = 30;
     while (Win32_PollInputs(&State))
     {
         if (Win32_IsKeyPressed(&State, 'C'))
             ChangeMode(&State);
-        if (State.KeyIsDown['R'])
+        if (Win32_IsKeyPressed(&State, 'R'))
             ResetMap(&State);
-        if (State.KeyIsDown['Z'])
+        if (Win32_IsKeyDown(&State, 'Z', KeyDelay))
             ZoomMap(&State, 1);
-        if (State.KeyIsDown['X'])
+        if (Win32_IsKeyDown(&State, 'X', KeyDelay))
             ZoomMap(&State, -1);
-        if (State.KeyIsDown[VK_UP] 
-        && State.IterationCount < 1000000
-        && Win32_GetKeyDownTime(&State, VK_UP) > 30)
-        {
+        if (Win32_IsKeyDown(&State, VK_UP, KeyDelay) && State.IterationCount < 1000000)
             State.IterationCount++;
-            State.KeyDownInit[VK_UP] = Win32_GetTimeMillisec();
-        }
-        if (State.KeyIsDown[VK_DOWN] 
-        && State.IterationCount > 1
-        && Win32_GetKeyDownTime(&State, VK_DOWN) > 30)
-        {
+        if (Win32_IsKeyDown(&State, VK_DOWN, KeyDelay) && State.IterationCount > 1)
             State.IterationCount--;
-            State.KeyDownInit[VK_DOWN] = Win32_GetTimeMillisec();
-        }
 
         if (ElapsedTime > MillisecPerFrame)
         {
