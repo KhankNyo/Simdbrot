@@ -5,7 +5,9 @@
 #include "Common.h"
 #define MAINTHREAD_CREATE_WINDOW (WM_USER + 0)
 #define MAINTHREAD_DESTROY_WINDOW (WM_USER + 1)
+
 #define MODE_MAX 2
+#define MAX_THREAD_COUNT 128
 
 
 /* Casey case because it's funny */
@@ -27,6 +29,15 @@ typedef struct win32_window_creation_args
     HMENU Menu;
 } win32_window_creation_args;
 
+typedef struct win32_render_thread_context 
+{
+    int IterationCount, RenderMode;
+    double MaxValue;
+
+    coordmap Map;
+    color_buffer ColorBuffer;
+} win32_render_thread_context;
+
 typedef struct win32_main_thread_state 
 {
 
@@ -37,7 +48,7 @@ typedef struct win32_main_thread_state
 
     Bool8 MouseIsDragging;
     int MouseX, MouseY;
-    int Mode;
+    int Mode, ThreadCount;
 
     Bool8 KeyWasDown[0x100];
     Bool8 KeyIsDown[0x100];
@@ -264,8 +275,8 @@ static Bool8 Win32_PollInputs(win32_main_thread_state *State)
                 win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
                 double Dx = x - State->MouseX;
                 double Dy = y - State->MouseY;
-                double WorldDx = State->Map.Width * Dx / Dimension.w;
-                double WorldDy = State->Map.Height * Dy / Dimension.h;
+                double WorldDx = Dx / Dimension.w * State->Map.Width;
+                double WorldDy = Dy / Dimension.h * State->Map.Height;
                 State->Map.Left += WorldDx;
                 State->Map.Top += WorldDy;
             }
@@ -332,18 +343,13 @@ static Bool8 Win32_IsKeyPressed(const win32_main_thread_state *State, char Key)
     return !State->KeyIsDown[k] && State->KeyWasDown[k];
 }
 
-static double Win32_GetKeyDownTime(const win32_main_thread_state *State, char Key)
-{
-    unsigned char k = Key;
-    return Win32_GetTimeMillisec() - State->KeyDownInit[k];
-}
-
 static Bool8 Win32_IsKeyDown(win32_main_thread_state *State, char Key, double Delay)
 {
     unsigned char k = Key;
-    Bool8 IsDown = State->KeyIsDown[k] && State->KeyDownInit[k] > Delay;
-    if (!IsDown)
-        State->KeyDownInit[k] = Win32_GetTimeMillisec();
+    double Time = Win32_GetTimeMillisec();
+    Bool8 IsDown = State->KeyIsDown[k] && Time - State->KeyDownInit[k] > Delay;
+    if (IsDown)
+        State->KeyDownInit[k] = Time;
     return IsDown;
 }
 
@@ -352,10 +358,48 @@ static const char *GetSimdMode(int Mode)
     switch (Mode)
     {
     default:
-    case 0: return "no simd";
-    case 1: return "avx256: f64x4";
-    case 2: return "avx256: f32x8";
+    case 0: return "regular f64x1";
+    case 1: return "avx256 f64x4";
+    case 2: return "avx256 f32x8";
     }
+}
+
+static DWORD Win32_RenderThread(LPVOID UserData)
+{
+    win32_render_thread_context *ThreadContext = UserData;
+
+    switch (ThreadContext->RenderMode)
+    {
+    case 0: 
+    {
+        RenderMandelbrotSet64_Unopt(
+            &ThreadContext->ColorBuffer, 
+            ThreadContext->Map, 
+            ThreadContext->IterationCount, 
+            ThreadContext->MaxValue
+        );
+    } break;
+    case 1:
+    {
+        RenderMandelbrotSet64_AVX256(
+            &ThreadContext->ColorBuffer, 
+            ThreadContext->Map, 
+            ThreadContext->IterationCount, 
+            ThreadContext->MaxValue
+        );
+    } break;
+    case 2:
+    {
+        RenderMandelbrotSet32_AVX256(
+            &ThreadContext->ColorBuffer, 
+            ThreadContext->Map, 
+            ThreadContext->IterationCount, 
+            ThreadContext->MaxValue
+        );
+    } break;
+    }
+
+    return 0;
 }
 
 
@@ -400,6 +444,7 @@ static DWORD Win32_Main(LPVOID UserData)
     win32_main_thread_state State = { 
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
+        .ThreadCount = 4,
     };
     ResetMap(&State);
 
@@ -417,7 +462,10 @@ static DWORD Win32_Main(LPVOID UserData)
     double ElapsedTime = 0;
     double MillisecPerFrame = 1000.0 / 60.0;
     double MaxValue = 4.0;
-    double KeyDelay = 30;
+    double KeyDelay = 50;
+
+    win32_render_thread_context RenderThreadContext[MAX_THREAD_COUNT] = { 0 };
+    HANDLE RenderThreadHandles[MAX_THREAD_COUNT] = { 0 };
     while (Win32_PollInputs(&State))
     {
         if (Win32_IsKeyPressed(&State, 'C'))
@@ -428,10 +476,14 @@ static DWORD Win32_Main(LPVOID UserData)
             ZoomMap(&State, 1);
         if (Win32_IsKeyDown(&State, 'X', KeyDelay))
             ZoomMap(&State, -1);
-        if (Win32_IsKeyDown(&State, VK_UP, KeyDelay) && State.IterationCount < 1000000)
+        if (Win32_IsKeyDown(&State, VK_UP, KeyDelay) && State.IterationCount <= 1000000)
             State.IterationCount++;
         if (Win32_IsKeyDown(&State, VK_DOWN, KeyDelay) && State.IterationCount > 1)
             State.IterationCount--;
+        if (Win32_IsKeyPressed(&State, VK_LEFT) && State.ThreadCount > 1)
+            State.ThreadCount--;
+        if (Win32_IsKeyPressed(&State, VK_RIGHT) && State.ThreadCount <= MAX_THREAD_COUNT)
+            State.ThreadCount++;
 
         if (ElapsedTime > MillisecPerFrame)
         {
@@ -442,31 +494,77 @@ static DWORD Win32_Main(LPVOID UserData)
                 Buffer.Height = Context.Height;
                 State.Map.Delta = State.Map.Height / Buffer.Height;
 
-                switch (State.Mode)
+                int BufferHeightForSingleThread = Buffer.Height / State.ThreadCount;
+                int RemainingHeight = Buffer.Height % State.ThreadCount;
+                double MapHeightForSingleThread = (double)BufferHeightForSingleThread / Buffer.Height * State.Map.Height;
+                double RemainingMapHeight = (double)RemainingHeight / Buffer.Height * State.Map.Height;
+                for (int i = 0; i < State.ThreadCount; i++)
                 {
-                case 0: RenderMandelbrotSet64_Unopt(&Buffer, State.Map, State.IterationCount, MaxValue); break;
-                case 1: RenderMandelbrotSet64_AVX256(&Buffer, State.Map, State.IterationCount, MaxValue); break;
-                case 2: RenderMandelbrotSet32_AVX256(&Buffer, State.Map, State.IterationCount, MaxValue); break;
+                    RenderThreadContext[i] = (win32_render_thread_context) {
+                        .RenderMode = State.Mode,
+                        .MaxValue = MaxValue,
+                        .IterationCount = State.IterationCount,
+                        .Map = (coordmap) {
+                            .Delta = State.Map.Delta,
+                            .Left = State.Map.Left,
+                            .Width = State.Map.Width,
+
+                            .Top = State.Map.Top - i*MapHeightForSingleThread,
+                            .Height = MapHeightForSingleThread,
+                        },
+                        .ColorBuffer = (color_buffer) {
+                            .Ptr = Buffer.Ptr + i * Buffer.Width * BufferHeightForSingleThread,
+                            .Width = Buffer.Width,
+                            .Height = BufferHeightForSingleThread,
+                        },
+                    };
+                    if (i == State.ThreadCount - 1)
+                    {
+                        RenderThreadContext[i].ColorBuffer.Height += RemainingHeight;
+                        RenderThreadContext[i].Map.Top -= RemainingMapHeight;
+                        RenderThreadContext[i].Map.Height += RemainingMapHeight;
+                    }
+                    memcpy(RenderThreadContext[i].ColorBuffer.Palette, Buffer.Palette, sizeof Buffer.Palette);
+
+                    DWORD ID;
+                    RenderThreadHandles[i] = CreateThread(
+                        NULL, 
+                        0, 
+                        Win32_RenderThread, 
+                        &RenderThreadContext[i], 
+                        0, 
+                        &ID
+                    );
+                    /* TODO: err checking */
                 }
+
+                WaitForMultipleObjects(State.ThreadCount, RenderThreadHandles, TRUE, INFINITE);
+                for (int i = 0; i < State.ThreadCount; i++)
+                {
+                    CloseHandle(RenderThreadHandles[i]);
+                }
+
 
 
                 TEXTMETRICA TextStat;
                 GetTextMetricsA(Context.Back, &TextStat);
 
                 char TmpTxt[512];
-                int LineCount = 5;
+                int LineCount = 6;
                 int Len = snprintf(TmpTxt, sizeof TmpTxt, 
                     "FPS: %3.2f\n"
                     "x: %3.5f .. %3.5f\n"
                     "y: %3.5f .. %3.5f\n"
-                    "iterations: %d\n"
-                    "%s", 
+                    "iteration%s: %d\n"
+                    "thread%s: %d\n"
+                    "rendering: %s", 
                     (double)1000.0 / ElapsedTime,
                     (double)-State.Map.Left, 
                     (double)-State.Map.Left + State.Map.Width,
                     (double)State.Map.Top - State.Map.Height, 
                     (double)State.Map.Top, 
-                    State.IterationCount,
+                    State.IterationCount != 1? "s":"", State.IterationCount,
+                    State.ThreadCount != 1? "s":"", State.ThreadCount,
                     GetSimdMode(State.Mode)
                 );
 
