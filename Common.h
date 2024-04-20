@@ -62,7 +62,7 @@ static inline void GetDefaultPalette(u32 Palette[16])
 }
 
 
-#define INLINE 
+#define INLINE
 #define STATIC_ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 INLINE void RenderMandelbrotSet64_Unopt(

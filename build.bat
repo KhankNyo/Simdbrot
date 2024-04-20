@@ -1,5 +1,9 @@
 @echo off 
 
+set "CC=gcc"
+set "CC_FLAGS=-flto -march=skylake -Ofast -mavx2 -mfma -Wall -Wextra -Wpedantic"
+set "LD_FLAGS=-Wl,-subsystem,windows"
+set "NAME=simdbrot"
 set "SRC_DIR=%CD%"
 
 if "clean"=="%1" (
@@ -17,18 +21,23 @@ if "clean"=="%1" (
         echo:
     )
 ) else (
-
-    REM call the 2022 version of MSVC
-    if "%VisualStudioVersion%"=="" call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
-    REM try the 2019 version if you don't have the 2022 version
-    REM if "%VisualStudioVersion%"=="" call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
-
-
     if not exist bin\ mkdir bin
-    pushd bin
-        cl /O2 /Fesimdbrot.exe "%SRC_DIR%\build.c" ^
-            /link user32.lib kernel32.lib gdi32.lib
-    popd 
+
+    if "cl"=="%1" (
+
+        REM call the 2022 version of MSVC
+        if "%VisualStudioVersion%"=="" call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+        REM try the 2019 version if you don't have the 2022 version
+        REM if "%VisualStudioVersion%"=="" call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+
+        pushd bin
+            cl /O2 "/Fe%NAME%.exe" "%SRC_DIR%\build.c" ^
+                /link user32.lib kernel32.lib gdi32.lib
+        popd 
+    ) else (
+        %CC% %CC_FLAGS% -Wall -Wextra -Wpedantic -o "bin\%NAME%" "%SRC_DIR%\build.c" %LD_FLAGS%^
+            -luser32 -lkernel32 -lgdi32
+    )
 
 
     echo:

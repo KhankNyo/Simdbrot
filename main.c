@@ -416,7 +416,7 @@ static DWORD Win32_Main(LPVOID UserData)
     double LastTime = Win32_GetTimeMillisec();
     double ElapsedTime = 0;
     double MillisecPerFrame = 1000.0 / 60.0;
-    double MaxValue = 2.0;
+    double MaxValue = 4.0;
     double KeyDelay = 30;
     while (Win32_PollInputs(&State))
     {
