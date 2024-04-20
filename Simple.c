@@ -4,7 +4,7 @@
 
 INLINE void RenderMandelbrotSet64_Unopt(
     color_buffer *ColorBuffer,
-    coordmap64 Map,
+    coordmap Map,
     int IterationCount, 
     double MaxValue
 )

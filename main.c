@@ -5,13 +5,15 @@
 #include "Common.h"
 #define MAINTHREAD_CREATE_WINDOW (WM_USER + 0)
 #define MAINTHREAD_DESTROY_WINDOW (WM_USER + 1)
-
+#define MODE_MAX 2
 
 
 /* Casey case because it's funny */
 typedef enum win32_menu_item 
 {
     MAINMENU_ABOUT = 2,
+    MAINMENU_RESET,
+    MAINMENU_CHANGE_MODE,
 } win32_menu_item;
 
 typedef struct win32_window_creation_args 
@@ -27,16 +29,20 @@ typedef struct win32_window_creation_args
 
 typedef struct win32_main_thread_state 
 {
-    Bool8 KeyWasDown[0x100];
-    Bool8 KeyIsDown[0x100];
-    unsigned char LastKeyDown;
 
     HWND WindowManager,
          MainWindow;
-    coordmap64 Map64;
+    coordmap Map;
+    int IterationCount;
 
     Bool8 MouseIsDragging;
     int MouseX, MouseY;
+    int Mode;
+
+    Bool8 KeyWasDown[0x100];
+    Bool8 KeyIsDown[0x100];
+    double KeyDownInit[0x100];
+    unsigned char LastKeyDown;
 } win32_main_thread_state;
 
 typedef struct win32_window_dimension 
@@ -179,6 +185,9 @@ static LRESULT CALLBACK Win32_MainWndProc(HWND Window, UINT Msg, WPARAM WParam, 
     } break;
     case WM_MOUSEWHEEL:
     case WM_MOUSEMOVE:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDOWN:
+    case WM_COMMAND:
     {
         PostThreadMessageA(Win32_MainThreadID, Msg, WParam, LParam);
     } break;
@@ -187,6 +196,47 @@ static LRESULT CALLBACK Win32_MainWndProc(HWND Window, UINT Msg, WPARAM WParam, 
     }
 
     return Result;
+}
+
+
+static void ZoomMap(win32_main_thread_state *State, int Zoom)
+{
+    double Scale = Zoom < 0 
+        ? 1.1
+        : 0.9;
+
+    win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
+    double MouseX = (double)State->MouseX / Dimension.w * State->Map.Width - State->Map.Left;
+    double MouseY = State->Map.Top - (double)State->MouseY / Dimension.h * State->Map.Height;
+
+    double ScaledLeft = (State->Map.Left + MouseX) * Scale - MouseX;
+    double ScaledTop = (State->Map.Top - MouseY) * Scale + MouseY;
+    double ScaledWidth = State->Map.Width * Scale;
+    double ScaledHeight = State->Map.Height * Scale;
+
+    State->Map.Left = ScaledLeft;
+    State->Map.Top = ScaledTop;
+    State->Map.Width = ScaledWidth;
+    State->Map.Height = ScaledHeight;
+}
+
+static void ResetMap(win32_main_thread_state *State)
+{
+    State->Map = (coordmap) {
+        .Left = 2,
+        .Width = 3,
+        .Top = 1,
+        .Height = 2,
+        .Delta = 0,
+    };
+    State->IterationCount = 400;
+}
+
+static void ChangeMode(win32_main_thread_state *State)
+{
+    State->Mode++;
+    if (State->Mode > MODE_MAX)
+        State->Mode = 0;
 }
 
 static Bool8 Win32_PollInputs(win32_main_thread_state *State)
@@ -214,10 +264,10 @@ static Bool8 Win32_PollInputs(win32_main_thread_state *State)
                 win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
                 double Dx = x - State->MouseX;
                 double Dy = y - State->MouseY;
-                double WorldDx = State->Map64.Width * Dx / Dimension.w;
-                double WorldDy = State->Map64.Height * Dy / Dimension.h;
-                State->Map64.Left += WorldDx;
-                State->Map64.Top += WorldDy;
+                double WorldDx = State->Map.Width * Dx / Dimension.w;
+                double WorldDy = State->Map.Height * Dy / Dimension.h;
+                State->Map.Left += WorldDx;
+                State->Map.Top += WorldDy;
             }
 
             State->MouseX = x;
@@ -230,42 +280,46 @@ static Bool8 Win32_PollInputs(win32_main_thread_state *State)
         } break;
         case WM_MOUSEWHEEL:
         {
-            double Scale = GET_WHEEL_DELTA_WPARAM(Message.wParam) < 0 
-                ? .9
-                : 1.1;
-
-            win32_window_dimension Dimension = Win32_GetWindowDimension(State->MainWindow);
-            double NormalizedMouseX = (double)State->MouseX / (double)Dimension.w;
-            double NormalizedMouseY = (double)State->MouseY / (double)Dimension.h;
-            double WorldMouseX = NormalizedMouseX * State->Map64.Width - State->Map64.Left;
-            double WorldMouseY = State->Map64.Top - NormalizedMouseY * State->Map64.Height;
-            double ScaledMouseX = WorldMouseX * Scale;
-            double ScaledMouseY = WorldMouseY * Scale;
-
-            double NewLeft = NormalizedMouseX*State->Left
-
-
-            State->Map64.Left = NewLeft;
-            State->Map64.Width = NewRight - NewLeft;
-#if 0
-            State->Map64.Height = NewTop - NewBottom;
-            State->Map64.Top = NewTop;
-#endif
+            ZoomMap(State, GET_WHEEL_DELTA_WPARAM(Message.wParam));
         } break;
 
         case WM_COMMAND:
         {
             /* menu messages */
-            if (HIWORD(Message.wParam))
+            if (0 == HIWORD(Message.wParam))
             {
+                switch ((win32_menu_item)LOWORD(Message.wParam))
+                {
+                case MAINMENU_ABOUT:
+                {
+                } break;
+                case MAINMENU_RESET:
+                {
+                    ResetMap(State);
+                } break;
+                case MAINMENU_CHANGE_MODE:
+                {
+                    ChangeMode(State);
+                } break;
+                }
             }
         } break;
         case WM_KEYUP:
         case WM_KEYDOWN:
         {
+            Bool8 KeyIsDown = Message.message == WM_KEYDOWN;
             unsigned char Key = Message.wParam & 0xFF;
             State->LastKeyDown = Key;
-            State->KeyIsDown[Key] = Message.message == WM_KEYDOWN;
+            State->KeyIsDown[Key] = KeyIsDown;
+
+            if (KeyIsDown && State->KeyDownInit[Key] == 0)
+            {
+                State->KeyDownInit[Key] = Win32_GetTimeMillisec();
+            }
+            else if (!KeyIsDown)
+            {
+                State->KeyDownInit[Key] = 0;
+            }
         } break;
         }
     }
@@ -276,6 +330,23 @@ static Bool8 Win32_IsKeyPressed(const win32_main_thread_state *State, char Key)
 {
     unsigned char k = Key;
     return !State->KeyIsDown[k] && State->KeyWasDown[k];
+}
+
+static double Win32_GetKeyDownTime(const win32_main_thread_state *State, char Key)
+{
+    unsigned char k = Key;
+    return Win32_GetTimeMillisec() - State->KeyDownInit[k];
+}
+
+static const char *GetSimdMode(int Mode)
+{
+    switch (Mode)
+    {
+    default:
+    case 0: return "no simd";
+    case 1: return "avx256: f64x4";
+    case 2: return "avx256: f32x8";
+    }
 }
 
 
@@ -295,6 +366,8 @@ static DWORD Win32_Main(LPVOID UserData)
     RegisterClassExA(&WndCls);
 
     HMENU MainMenu = CreateMenu();
+    AppendMenuA(MainMenu, MF_STRING, MAINMENU_RESET, "&Reset");
+    AppendMenuA(MainMenu, MF_STRING, MAINMENU_CHANGE_MODE, "&Change rendering mode");
     win32_window_creation_args Args = {
         .x = CW_USEDEFAULT, 
         .y = CW_USEDEFAULT, 
@@ -318,13 +391,8 @@ static DWORD Win32_Main(LPVOID UserData)
     win32_main_thread_state State = { 
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
-        .Map64 = {
-            .Left = 2, 
-            .Top = 1, 
-            .Height = 2,
-            .Width = 3,
-        },
     };
+    ResetMap(&State);
 
     {
         POINT Point;
@@ -339,13 +407,31 @@ static DWORD Win32_Main(LPVOID UserData)
     double LastTime = Win32_GetTimeMillisec();
     double ElapsedTime = 0;
     double MillisecPerFrame = 1000.0 / 60.0;
-    int IterationCount = 512;
     double MaxValue = 2.0;
-    Bool8 SimdMode = false;
     while (Win32_PollInputs(&State))
     {
-        if (Win32_IsKeyPressed(&State, 'T'))
-            SimdMode = !SimdMode;
+        if (Win32_IsKeyPressed(&State, 'C'))
+            ChangeMode(&State);
+        if (State.KeyIsDown['R'])
+            ResetMap(&State);
+        if (State.KeyIsDown['Z'])
+            ZoomMap(&State, 1);
+        if (State.KeyIsDown['X'])
+            ZoomMap(&State, -1);
+        if (State.KeyIsDown[VK_UP] 
+        && State.IterationCount < 1000000
+        && Win32_GetKeyDownTime(&State, VK_UP) > 30)
+        {
+            State.IterationCount++;
+            State.KeyDownInit[VK_UP] = Win32_GetTimeMillisec();
+        }
+        if (State.KeyIsDown[VK_DOWN] 
+        && State.IterationCount > 1
+        && Win32_GetKeyDownTime(&State, VK_DOWN) > 30)
+        {
+            State.IterationCount--;
+            State.KeyDownInit[VK_DOWN] = Win32_GetTimeMillisec();
+        }
 
         if (ElapsedTime > MillisecPerFrame)
         {
@@ -354,35 +440,45 @@ static DWORD Win32_Main(LPVOID UserData)
                 Buffer.Ptr = Context.BitmapData;
                 Buffer.Width = Context.Width;
                 Buffer.Height = Context.Height;
-                State.Map64.Delta = State.Map64.Height / Buffer.Height;
+                State.Map.Delta = State.Map.Height / Buffer.Height;
 
-                if (SimdMode)
-                    RenderMandelbrotSet64_AVX256(&Buffer, State.Map64, IterationCount, MaxValue);
-                else
-                    RenderMandelbrotSet64_Unopt(&Buffer, State.Map64, IterationCount, MaxValue);
+                switch (State.Mode)
+                {
+                case 0: RenderMandelbrotSet64_Unopt(&Buffer, State.Map, State.IterationCount, MaxValue); break;
+                case 1: RenderMandelbrotSet64_AVX256(&Buffer, State.Map, State.IterationCount, MaxValue); break;
+                case 2: RenderMandelbrotSet32_AVX256(&Buffer, State.Map, State.IterationCount, MaxValue); break;
+                }
 
 
                 TEXTMETRICA TextStat;
                 GetTextMetricsA(Context.Back, &TextStat);
 
-                char TmpTxt[64];
+                char TmpTxt[512];
+                int LineCount = 5;
                 int Len = snprintf(TmpTxt, sizeof TmpTxt, 
                     "FPS: %3.2f\n"
-                    "x: %3.2f .. %3.2f\n"
-                    "y: %3.2f .. %3.2f", 
-                    1000.0 / ElapsedTime,
-                    -State.Map64.Left, -State.Map64.Left + State.Map64.Width,
-                    State.Map64.Top - State.Map64.Height, State.Map64.Top
+                    "x: %3.5f .. %3.5f\n"
+                    "y: %3.5f .. %3.5f\n"
+                    "iterations: %d\n"
+                    "%s", 
+                    (double)1000.0 / ElapsedTime,
+                    (double)-State.Map.Left, 
+                    (double)-State.Map.Left + State.Map.Width,
+                    (double)State.Map.Top - State.Map.Height, 
+                    (double)State.Map.Top, 
+                    State.IterationCount,
+                    GetSimdMode(State.Mode)
                 );
+
                 RECT TopRight = {
                     .left = Context.Width - 30 * TextStat.tmMaxCharWidth,
                     .right = Context.Width,
                     .top = 0,
-                    .bottom = TextStat.tmHeight * 3,
+                    .bottom = TextStat.tmHeight * LineCount,
                 };
                 SetTextColor(Context.Back, 0x0000FF00);
-                SetBkColor(Context.Back, 0x00000000);
-                DrawText(Context.Back, TmpTxt, Len, &TopRight, DT_RIGHT);
+                SetBkColor(Context.Back, 0);
+                DrawTextA(Context.Back, TmpTxt, Len, &TopRight, DT_RIGHT);
             }
             Win32_EndPaint(MainWindow, &Context);
             ElapsedTime = 0;

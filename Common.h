@@ -24,41 +24,13 @@ typedef struct color_buffer
     int Height;
 } color_buffer;
 
-typedef struct coordmap64
+typedef struct coordmap
 {
     double Left, Top;
     double Width, Height;
     double Delta;
-} coordmap64;
+} coordmap;
 
-typedef struct coordmap32 
-{
-    float Left, Top;
-    float Width, Height;
-    float Delta;
-} coordmap32;
-
-static inline coordmap32 Map64To32(coordmap64 m)
-{
-    return (coordmap32) {
-        .Delta = m.Delta,
-        .Width = m.Width,
-        .Height = m.Height,
-        .Top = m.Top,
-        .Left = m.Left,
-    };
-}
-
-static inline coordmap64 Map32To64(coordmap32 m)
-{
-    return (coordmap64) {
-        .Delta = m.Delta,
-        .Width = m.Width,
-        .Height = m.Height,
-        .Top = m.Top,
-        .Left = m.Left,
-    };
-}
 
 static inline void GetDefaultPalette(u32 Palette[16])
 {
@@ -90,19 +62,26 @@ static inline void GetDefaultPalette(u32 Palette[16])
 }
 
 
-#define INLINE __forceinline
+#define INLINE 
 #define STATIC_ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 INLINE void RenderMandelbrotSet64_Unopt(
     color_buffer *ColorBuffer,
-    coordmap64 Map64,
+    coordmap Map,
     int IterationCount, 
     double MaxValue
 );
 
 INLINE void RenderMandelbrotSet64_AVX256(
     color_buffer *ColorBuffer,
-    coordmap64 Map64,
+    coordmap Map,
+    int IterationCount,
+    double MaxValue
+);
+
+INLINE void RenderMandelbrotSet32_AVX256(
+    color_buffer *ColorBuffer,
+    coordmap Map,
     int IterationCount,
     double MaxValue
 );
