@@ -6,7 +6,7 @@
 #define MAINTHREAD_CREATE_WINDOW (WM_USER + 0)
 #define MAINTHREAD_DESTROY_WINDOW (WM_USER + 1)
 
-#define MODE_MAX 2
+#define MODE_MAX 9
 #define MAX_THREAD_COUNT 128
 
 
@@ -31,8 +31,8 @@ typedef struct win32_window_creation_args
 
 typedef struct win32_render_thread_context 
 {
-    int IterationCount, RenderMode;
     double MaxValue;
+    int IterationCount, RenderMode;
 
     coordmap Map;
     color_buffer ColorBuffer;
@@ -358,46 +358,47 @@ static const char *GetSimdMode(int Mode)
     switch (Mode)
     {
     default:
-    case 0: return "regular f64x1";
-    case 1: return "avx256 f64x4";
-    case 2: return "avx256 f32x8";
+    case 0: return "regular f32x1";
+    case 1: return "regular f64x1";
+    case 2: return "sse f32x4";
+    case 3: return "sse f64x2";
+    case 4: return "sse f32x4 (with fma)";
+    case 5: return "sse f64x2 (with fma)";
+    case 6: return "avx f32x8";
+    case 7: return "avx f64x4";
+    case 8: return "avx f32x8 (with fma)";
+    case 9: return "avx f64x4 (with fma)";
     }
 }
 
 static DWORD Win32_RenderThread(LPVOID UserData)
 {
     win32_render_thread_context *ThreadContext = UserData;
+    typedef void (*MandelbrotRenderFn)(
+        color_buffer *ColorBuffer,
+        const coordmap *Map,
+        int IterationCount, 
+        double MaxValue
+    );
+    static const MandelbrotRenderFn Render[MODE_MAX + 1] = {
+        RenderMandelbrotSet32_Unopt,
+        RenderMandelbrotSet64_Unopt,
+        RenderMandelbrotSet32_SSE,
+        RenderMandelbrotSet64_SSE,
+        RenderMandelbrotSet32_SSEFMA,
+        RenderMandelbrotSet64_SSEFMA,
+        RenderMandelbrotSet32_AVX,
+        RenderMandelbrotSet64_AVX,
+        RenderMandelbrotSet32_AVXFMA,
+        RenderMandelbrotSet64_AVXFMA
+    };
 
-    switch (ThreadContext->RenderMode)
-    {
-    case 0: 
-    {
-        RenderMandelbrotSet64_Unopt(
-            &ThreadContext->ColorBuffer, 
-            ThreadContext->Map, 
-            ThreadContext->IterationCount, 
-            ThreadContext->MaxValue
-        );
-    } break;
-    case 1:
-    {
-        RenderMandelbrotSet64_AVX256(
-            &ThreadContext->ColorBuffer, 
-            ThreadContext->Map, 
-            ThreadContext->IterationCount, 
-            ThreadContext->MaxValue
-        );
-    } break;
-    case 2:
-    {
-        RenderMandelbrotSet32_AVX256(
-            &ThreadContext->ColorBuffer, 
-            ThreadContext->Map, 
-            ThreadContext->IterationCount, 
-            ThreadContext->MaxValue
-        );
-    } break;
-    }
+    Render[ThreadContext->RenderMode](
+        &ThreadContext->ColorBuffer, 
+        &ThreadContext->Map, 
+        ThreadContext->IterationCount, 
+        ThreadContext->MaxValue
+    );
 
     return 0;
 }
@@ -445,6 +446,7 @@ static DWORD Win32_Main(LPVOID UserData)
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
         .ThreadCount = 4,
+        .Mode = 1
     };
     ResetMap(&State);
 
@@ -529,7 +531,7 @@ static DWORD Win32_Main(LPVOID UserData)
                     DWORD ID;
                     RenderThreadHandles[i] = CreateThread(
                         NULL, 
-                        0, 
+                        1024, 
                         Win32_RenderThread, 
                         &RenderThreadContext[i], 
                         0, 
@@ -537,10 +539,9 @@ static DWORD Win32_Main(LPVOID UserData)
                     );
                     /* TODO: err checking */
                 }
-
-                WaitForMultipleObjects(State.ThreadCount, RenderThreadHandles, TRUE, INFINITE);
                 for (int i = 0; i < State.ThreadCount; i++)
                 {
+                    WaitForSingleObject(RenderThreadHandles[i], INFINITE);
                     CloseHandle(RenderThreadHandles[i]);
                 }
 

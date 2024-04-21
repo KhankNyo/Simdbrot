@@ -2,9 +2,9 @@
 #include "Common.h"
 #include <stdint.h>
 
-INLINE void RenderMandelbrotSet64_Unopt(
+void RenderMandelbrotSet32_Unopt(
     color_buffer *ColorBuffer,
-    coordmap Map,
+    const coordmap *Map,
     int IterationCount, 
     double MaxValue
 )
@@ -25,23 +25,23 @@ INLINE void RenderMandelbrotSet64_Unopt(
       */
 
      u32 *Buffer = ColorBuffer->Ptr;
-     double MaxValueSquared = MaxValue * MaxValue;
-     double Left = -Map.Left;
-     double Zix = Left;
-     double Ziy = Map.Top;
+     float MaxValueSquared = MaxValue * MaxValue;
+     float Left = -Map->Left;
+     float Zix = Left;
+     float Ziy = Map->Top;
      for (int y = 0; 
               y < ColorBuffer->Height; 
               y++, 
-              Ziy -= Map.Delta,
+              Ziy -= Map->Delta,
               Zix = Left) 
      {
          for (int x = 0; 
                   x < ColorBuffer->Width; 
                   x++,
-                  Zix += Map.Delta)
+                  Zix += Map->Delta)
          {
-             double Zx = 0;
-             double Zy = 0;
+             float Zx = 0;
+             float Zy = 0;
 
              /* calculate whether the current Z_initial is in the set or not */
              int i;
@@ -50,7 +50,7 @@ INLINE void RenderMandelbrotSet64_Unopt(
                   && (Zx*Zx + Zy*Zy) < MaxValueSquared;
                   i++)
              {
-                 double Tmp = Zx*Zx - Zy*Zy + Zix;
+                 float Tmp = Zx*Zx - Zy*Zy + Zix;
                  Zy = 2.0*Zy*Zx + Ziy;
                  Zx = Tmp;
              }
@@ -64,6 +64,53 @@ INLINE void RenderMandelbrotSet64_Unopt(
              }
 
              /* the final step, writing the color */
+             *Buffer++ = Color;
+         }
+     }
+}
+
+void RenderMandelbrotSet64_Unopt(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount, 
+    double MaxValue
+)
+{
+     u32 *Buffer = ColorBuffer->Ptr;
+     double MaxValueSquared = MaxValue * MaxValue;
+     double Left = -Map->Left;
+     double Zix = Left;
+     double Ziy = Map->Top;
+     for (int y = 0; 
+              y < ColorBuffer->Height; 
+              y++, 
+              Ziy -= Map->Delta,
+              Zix = Left) 
+     {
+         for (int x = 0; 
+                  x < ColorBuffer->Width; 
+                  x++,
+                  Zix += Map->Delta)
+         {
+             double Zx = 0;
+             double Zy = 0;
+             int i;
+             for (i = 0; 
+                  i < IterationCount
+                  && (Zx*Zx + Zy*Zy) < MaxValueSquared;
+                  i++)
+             {
+                 double Tmp = Zx*Zx - Zy*Zy + Zix;
+                 Zy = 2.0*Zy*Zx + Ziy;
+                 Zx = Tmp;
+             }
+
+             u32 Color = 0;
+             if (i < IterationCount)
+             {
+                 int ColorIndex = i % STATIC_ARRAY_SIZE(ColorBuffer->Palette);
+                 Color = ColorBuffer->Palette[ColorIndex];
+             }
              *Buffer++ = Color;
          }
      }

@@ -62,29 +62,83 @@ static inline void GetDefaultPalette(u32 Palette[16])
 }
 
 
-#define INLINE
 #define STATIC_ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-INLINE void RenderMandelbrotSet64_Unopt(
+
+void RenderMandelbrotSet32_Unopt(
     color_buffer *ColorBuffer,
-    coordmap Map,
+    const coordmap *Map,
     int IterationCount, 
     double MaxValue
 );
 
-INLINE void RenderMandelbrotSet64_AVX256(
+void RenderMandelbrotSet64_Unopt(
     color_buffer *ColorBuffer,
-    coordmap Map,
+    const coordmap *Map,
+    int IterationCount, 
+    double MaxValue
+);
+
+
+void RenderMandelbrotSet32_SSE(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
     int IterationCount,
     double MaxValue
 );
 
-INLINE void RenderMandelbrotSet32_AVX256(
+void RenderMandelbrotSet64_SSE(
     color_buffer *ColorBuffer,
-    coordmap Map,
+    const coordmap *Map,
     int IterationCount,
     double MaxValue
 );
+
+
+void RenderMandelbrotSet32_SSEFMA(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
+void RenderMandelbrotSet64_SSEFMA(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
+
+void RenderMandelbrotSet32_AVX(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
+void RenderMandelbrotSet64_AVX(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
+
+void RenderMandelbrotSet32_AVXFMA(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
+void RenderMandelbrotSet64_AVXFMA(
+    color_buffer *ColorBuffer,
+    const coordmap *Map,
+    int IterationCount,
+    double MaxValue
+);
+
 
 #endif /* COMMON_H */
 

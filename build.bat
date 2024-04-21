@@ -1,8 +1,8 @@
 @echo off 
 
 set "CC=gcc"
-set "CC_FLAGS=-flto -march=skylake -Ofast -mavx2 -mfma -Wall -Wextra -Wpedantic"
-set "LD_FLAGS=-Wl,-subsystem,windows"
+set "CC_FLAGS=-march=skylake -Ofast -mavx2 -mfma -Wall -Wextra -Wpedantic"
+set "LD_FLAGS="
 set "NAME=simdbrot"
 set "SRC_DIR=%CD%"
 
@@ -31,7 +31,7 @@ if "clean"=="%1" (
         REM if "%VisualStudioVersion%"=="" call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
 
         pushd bin
-            cl /O2 "/Fe%NAME%.exe" "%SRC_DIR%\build.c" ^
+            cl /Zi /O2 "/Fe%NAME%.exe" "%SRC_DIR%\build.c" ^
                 /link user32.lib kernel32.lib gdi32.lib
         popd 
     ) else (
