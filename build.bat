@@ -2,7 +2,7 @@
 
 set "CC=gcc"
 set "CC_FLAGS=-march=skylake -Ofast -mavx2 -mfma -Wall -Wextra -Wpedantic"
-set "LD_FLAGS="
+set "LD_FLAGS=-Wl,-subsystem,windows"
 set "NAME=simdbrot"
 set "SRC_DIR=%CD%"
 
