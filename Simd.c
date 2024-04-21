@@ -2,25 +2,6 @@
 #include <immintrin.h>
 #include "Common.h"
 
-
-typedef union m256_access
-{
-    __m256i m256i;
-    __m256d m256d;
-    __m256 m256;
-    u32 DWord[8];
-    u64 QWord[4];
-} m256_access;
-
-typedef union m128_access 
-{
-    __m128i m128i;
-    __m128d m128d;
-    __m128  m128;
-    u32 DWord[4];
-    u64 QWord[2];
-} m128_access;
-
 void RenderMandelbrotSet32_SSE(
     color_buffer *ColorBuffer,
     const coordmap *Map,
@@ -964,16 +945,15 @@ LoopHead:
             /* if a particular pixel stays bounded, it will recieve a color value, 
              * otherwise its color is 0 (black) */
 
+
             /* split the Counter of each pixel */
-            m256_access ColorIndexAccess = {
-                .m256i = _mm256_and_si256(Counter4, ColorPaletteSizeMask4),
-            };
+            __m256i ColorIndex = _mm256_and_si256(Counter4, ColorPaletteSizeMask4);
             /* load the corresponding color value of each pixel */
             __m128i Color4 = _mm_set_epi32(
-                ColorBuffer->Palette[ColorIndexAccess.QWord[3]],
-                ColorBuffer->Palette[ColorIndexAccess.QWord[2]],
-                ColorBuffer->Palette[ColorIndexAccess.QWord[1]],
-                ColorBuffer->Palette[ColorIndexAccess.QWord[0]]
+                ColorBuffer->Palette[_mm256_extract_epi64(ColorIndex, 3)],
+                ColorBuffer->Palette[_mm256_extract_epi64(ColorIndex, 2)],
+                ColorBuffer->Palette[_mm256_extract_epi64(ColorIndex, 1)],
+                ColorBuffer->Palette[_mm256_extract_epi64(ColorIndex, 0)]
             );
 
             /* mask out black color */
