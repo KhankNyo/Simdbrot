@@ -102,7 +102,15 @@ static win32_window_dimension Win32_GetWindowDimension(HWND Window)
 static win32_paint_context Win32_BeginPaint(HWND Window)
 {
     HDC FrontDC = GetDC(Window);
+    if (NULL == FrontDC)
+    {
+        Win32_Fatal("unable to retrieve device context of the window.");
+    }
     HDC BackDC = CreateCompatibleDC(FrontDC);
+    if (NULL == BackDC)
+    {
+        Win32_Fatal("unable to retrieve device context of the window.");
+    }
 
     win32_window_dimension Dimension = Win32_GetWindowDimension(Window);
     int Width = Dimension.w,
@@ -446,7 +454,7 @@ static DWORD Win32_Main(LPVOID UserData)
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
         .ThreadCount = 4,
-        .Mode = 1
+        .Mode = 0
     };
     ResetMap(&State);
 
@@ -489,12 +497,30 @@ static DWORD Win32_Main(LPVOID UserData)
 
         if (ElapsedTime > MillisecPerFrame)
         {
-            win32_paint_context Context = Win32_BeginPaint(MainWindow);
+#define FIXED_BUFFER_WIDTH 240
+#define FIXED_BUFFER_HEIGHT 160
+#define HAS_FIXED_BUFFER (FIXED_BUFFER_WIDTH * FIXED_BUFFER_HEIGHT)
+#if HAS_FIXED_BUFFER
+            static u32 FixedBuffer[FIXED_BUFFER_WIDTH * FIXED_BUFFER_HEIGHT];
+            HDC DC = GetDC(MainWindow);
+            if (NULL == DC)
             {
+                Win32_Fatal("Unable to retriece the window's device context.");
+            }
+
+            Buffer.Ptr = FixedBuffer;
+            Buffer.Width = FIXED_BUFFER_WIDTH;
+            Buffer.Height = FIXED_BUFFER_HEIGHT;
+            State.Map.Delta = State.Map.Height / Buffer.Height;
+#else
+            win32_paint_context Context = Win32_BeginPaint(MainWindow);
+                HDC DC = Context.Back;
                 Buffer.Ptr = Context.BitmapData;
                 Buffer.Width = Context.Width;
                 Buffer.Height = Context.Height;
                 State.Map.Delta = State.Map.Height / Buffer.Height;
+                int WindowWidth = Buffer.Width;
+#endif
 
                 int BufferHeightForSingleThread = Buffer.Height / State.ThreadCount;
                 int RemainingHeight = Buffer.Height % State.ThreadCount;
@@ -544,11 +570,26 @@ static DWORD Win32_Main(LPVOID UserData)
                     WaitForSingleObject(RenderThreadHandles[i], INFINITE);
                     CloseHandle(RenderThreadHandles[i]);
                 }
+#if HAS_FIXED_BUFFER 
+                win32_window_dimension Dimension = Win32_GetWindowDimension(MainWindow);
+                int WindowWidth = Dimension.w;
+                BITMAPINFO FixedBufferInfo = {
+                    .bmiHeader = {
+                        .biSize = sizeof FixedBufferInfo, 
+                        .biWidth = Buffer.Width,
+                        .biHeight = -Buffer.Height, 
+                        .biPlanes = 1,
+                        .biBitCount = 32, 
+                        .biCompression = BI_RGB, 
+                    },
+                };
+                StretchDIBits(DC, 0, 0, Dimension.w, Dimension.h, 0, 0, Buffer.Width, Buffer.Height, FixedBuffer, &FixedBufferInfo, DIB_RGB_COLORS, SRCCOPY);
+#endif
 
 
 
                 TEXTMETRICA TextStat;
-                GetTextMetricsA(Context.Back, &TextStat);
+                GetTextMetricsA(DC, &TextStat);
 
                 char TmpTxt[512];
                 int LineCount = 6;
@@ -570,18 +611,24 @@ static DWORD Win32_Main(LPVOID UserData)
                 );
 
                 RECT TopRight = {
-                    .left = Context.Width - 30 * TextStat.tmMaxCharWidth,
-                    .right = Context.Width,
+                    .left = WindowWidth - 30 * TextStat.tmMaxCharWidth,
+                    .right = WindowWidth,
                     .top = 0,
                     .bottom = TextStat.tmHeight * LineCount,
                 };
-                SetTextColor(Context.Back, 0x0000FF00);
-                SetBkColor(Context.Back, 0);
-                DrawTextA(Context.Back, TmpTxt, Len, &TopRight, DT_RIGHT);
-            }
+                SetTextColor(DC, 0x0000FF00);
+                SetBkColor(DC, 0);
+                DrawTextA(DC, TmpTxt, Len, &TopRight, DT_RIGHT);
+#if HAS_FIXED_BUFFER
+            ReleaseDC(MainWindow, DC);
+#else
             Win32_EndPaint(MainWindow, &Context);
+#endif
+
+
             ElapsedTime = 0;
         }
+
         double CurrentTime = Win32_GetTimeMillisec();
         ElapsedTime += CurrentTime - LastTime;
         LastTime = CurrentTime;
