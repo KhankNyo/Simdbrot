@@ -16,6 +16,14 @@ typedef uint8_t Bool8;
 #  define RGB(r, g, b) (((u32)(u8)(r) << 16) | ((u32)(u8)(g) << 8) | ((u8)(b)))
 #endif /* RGB */
 
+#ifndef MIN 
+#  define MIN(a, b) ((a) < (b)? (a) : (b))
+#endif /* MIN */
+
+#ifndef MAX
+#  define MAX(a, b) ((a) > (b)? (a) : (b))
+#endif /* MAX */
+
 typedef struct color_buffer 
 {
     u32 Palette[16];

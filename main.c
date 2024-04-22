@@ -49,6 +49,7 @@ typedef struct win32_main_thread_state
     Bool8 MouseIsDragging;
     int MouseX, MouseY;
     int Mode, ThreadCount;
+    int FixedBufferWidth, FixedBufferHeight;
 
     Bool8 KeyWasDown[0x100];
     Bool8 KeyIsDown[0x100];
@@ -454,7 +455,9 @@ static DWORD Win32_Main(LPVOID UserData)
         .WindowManager = WindowManager,
         .MainWindow = MainWindow,
         .ThreadCount = 4,
-        .Mode = 0
+        .Mode = 0,
+        .FixedBufferWidth = 240,
+        .FixedBufferHeight = 180
     };
     ResetMap(&State);
 
@@ -476,6 +479,12 @@ static DWORD Win32_Main(LPVOID UserData)
 
     win32_render_thread_context RenderThreadContext[MAX_THREAD_COUNT] = { 0 };
     HANDLE RenderThreadHandles[MAX_THREAD_COUNT] = { 0 };
+#define FIXED_BUFFER_MAX_WIDTH 1080
+#define FIXED_BUFFER_MAX_HEIGHT 720
+#define FIXED_BUFFER_MIN_WIDTH 160
+#define FIXED_BUFFER_MIN_HEIGHT 80
+#define FIXED_BUFFER_MIN_SIZE (160*80)
+    static u32 FixedBuffer[FIXED_BUFFER_MAX_WIDTH * FIXED_BUFFER_MAX_HEIGHT];
     while (Win32_PollInputs(&State))
     {
         if (Win32_IsKeyPressed(&State, 'C'))
@@ -497,30 +506,36 @@ static DWORD Win32_Main(LPVOID UserData)
 
         if (ElapsedTime > MillisecPerFrame)
         {
-#define FIXED_BUFFER_WIDTH 240
-#define FIXED_BUFFER_HEIGHT 160
-#define HAS_FIXED_BUFFER (FIXED_BUFFER_WIDTH * FIXED_BUFFER_HEIGHT)
-#if HAS_FIXED_BUFFER
-            static u32 FixedBuffer[FIXED_BUFFER_WIDTH * FIXED_BUFFER_HEIGHT];
-            HDC DC = GetDC(MainWindow);
-            if (NULL == DC)
+            win32_window_dimension Dimension = Win32_GetWindowDimension(MainWindow);
+            int WindowWidth = Dimension.w;
+            win32_paint_context Context;
+            HDC DC;
+            Bool8 UsingFixedBuffer = State.FixedBufferWidth * State.FixedBufferHeight > FIXED_BUFFER_MIN_SIZE;
+            if (UsingFixedBuffer)
             {
-                Win32_Fatal("Unable to retriece the window's device context.");
-            }
+                DC = GetDC(MainWindow);
+                if (NULL == DC)
+                    Win32_Fatal("Unable to retriece the window's device context.");
 
-            Buffer.Ptr = FixedBuffer;
-            Buffer.Width = FIXED_BUFFER_WIDTH;
-            Buffer.Height = FIXED_BUFFER_HEIGHT;
-            State.Map.Delta = State.Map.Height / Buffer.Height;
-#else
-            win32_paint_context Context = Win32_BeginPaint(MainWindow);
-                HDC DC = Context.Back;
+                State.FixedBufferWidth = MIN(State.FixedBufferWidth, FIXED_BUFFER_MAX_WIDTH);
+                State.FixedBufferHeight = MIN(State.FixedBufferHeight, FIXED_BUFFER_MAX_HEIGHT);
+                State.FixedBufferWidth = MAX(State.FixedBufferWidth, FIXED_BUFFER_MIN_WIDTH);
+                State.FixedBufferHeight = MAX(State.FixedBufferHeight, FIXED_BUFFER_MIN_HEIGHT);
+
+                Buffer.Ptr = FixedBuffer;
+                Buffer.Width = State.FixedBufferWidth;
+                Buffer.Height = State.FixedBufferHeight;
+                State.Map.Delta = State.Map.Height / Buffer.Height;
+            }
+            else
+            {
+                Context = Win32_BeginPaint(MainWindow);
+                DC = Context.Back;
                 Buffer.Ptr = Context.BitmapData;
                 Buffer.Width = Context.Width;
                 Buffer.Height = Context.Height;
                 State.Map.Delta = State.Map.Height / Buffer.Height;
-                int WindowWidth = Buffer.Width;
-#endif
+            }
 
                 int BufferHeightForSingleThread = Buffer.Height / State.ThreadCount;
                 int RemainingHeight = Buffer.Height % State.ThreadCount;
@@ -570,22 +585,27 @@ static DWORD Win32_Main(LPVOID UserData)
                     WaitForSingleObject(RenderThreadHandles[i], INFINITE);
                     CloseHandle(RenderThreadHandles[i]);
                 }
-#if HAS_FIXED_BUFFER 
-                win32_window_dimension Dimension = Win32_GetWindowDimension(MainWindow);
-                int WindowWidth = Dimension.w;
-                BITMAPINFO FixedBufferInfo = {
-                    .bmiHeader = {
-                        .biSize = sizeof FixedBufferInfo, 
-                        .biWidth = Buffer.Width,
-                        .biHeight = -Buffer.Height, 
-                        .biPlanes = 1,
-                        .biBitCount = 32, 
-                        .biCompression = BI_RGB, 
-                    },
-                };
-                StretchDIBits(DC, 0, 0, Dimension.w, Dimension.h, 0, 0, Buffer.Width, Buffer.Height, FixedBuffer, &FixedBufferInfo, DIB_RGB_COLORS, SRCCOPY);
-#endif
 
+                if (UsingFixedBuffer)
+                {
+                    static BITMAPINFO FixedBufferInfo = {
+                        .bmiHeader = {
+                            .biSize = sizeof FixedBufferInfo, 
+                            .biPlanes = 1,
+                            .biBitCount = 32, 
+                            .biCompression = BI_RGB, 
+                        },
+                    };
+                    FixedBufferInfo.bmiHeader.biWidth = Buffer.Width,
+                    FixedBufferInfo.bmiHeader.biHeight = -Buffer.Height, 
+                    StretchDIBits(DC, 
+                        0, 0, Dimension.w, Dimension.h, 
+                        0, 0, Buffer.Width, Buffer.Height, 
+                        FixedBuffer, &FixedBufferInfo, 
+                        DIB_RGB_COLORS, SRCCOPY
+                    );
+                }
+                
 
 
                 TEXTMETRICA TextStat;
@@ -619,11 +639,9 @@ static DWORD Win32_Main(LPVOID UserData)
                 SetTextColor(DC, 0x0000FF00);
                 SetBkColor(DC, 0);
                 DrawTextA(DC, TmpTxt, Len, &TopRight, DT_RIGHT);
-#if HAS_FIXED_BUFFER
-            ReleaseDC(MainWindow, DC);
-#else
-            Win32_EndPaint(MainWindow, &Context);
-#endif
+            if (UsingFixedBuffer)
+                ReleaseDC(MainWindow, DC);
+            else Win32_EndPaint(MainWindow, &Context);
 
 
             ElapsedTime = 0;
